@@ -1,0 +1,123 @@
+{
+  "name": "blog-auto",
+  "displayName": "오늘 한 일 정리 (Blog Auto)",
+  "description": "Git 커밋을 블로그용 초안으로 정리 · 티스토리/벨로그 발행 준비",
+  "version": "0.1.0",
+  "publisher": "apkool12",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Snippets"
+  ],
+  "keywords": [
+    "blog",
+    "tistory",
+    "velog",
+    "git",
+    "commit",
+    "summary",
+    "오늘 한 일"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/apkool12/blog-auto.git"
+  },
+  "bugs": {
+    "url": "https://github.com/apkool12/blog-auto/issues"
+  },
+  "homepage": "https://github.com/apkool12/blog-auto#readme",
+  "activationEvents": [
+    "onView:cursorPlugin.blogView"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "blog-auto.helloWorld",
+        "title": "Hello World"
+      },
+      {
+        "command": "blog-auto.formatTodayPost",
+        "title": "오늘 한 일 블로그용으로 정리"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "cursorPlugin.blogView",
+          "name": "오늘 한 일 정리"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "블로그 정리",
+      "properties": {
+        "blog-auto.blogUrl": {
+          "type": "string",
+          "default": "",
+          "description": "말투 학습용 블로그 주소 (티스토리/벨로그 등)"
+        },
+        "blog-auto.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "내 말투로 쓰기 사용 시 OpenAI API 키 (선택)"
+        },
+        "blog-auto.diffMaxLinesPerCommit": {
+          "type": "number",
+          "default": 120,
+          "minimum": 20,
+          "maximum": 500,
+          "description": "커밋당 diff 최대 줄 수 (핵심 코드 포함 시)"
+        },
+        "blog-auto.diffMaxLinesPerFile": {
+          "type": "number",
+          "default": 35,
+          "minimum": 10,
+          "maximum": 200,
+          "description": "파일당 diff 최대 줄 수"
+        },
+        "blog-auto.diffIncludeExtensions": {
+          "type": "string",
+          "default": "ts,tsx,js,jsx,css,html,vue,json",
+          "description": "diff에 포함할 확장자 (쉼표 구분)"
+        },
+        "blog-auto.diffSkipPatterns": {
+          "type": "string",
+          "default": "package-lock\\.json,.lock$,node_modules,^dist/",
+          "description": "diff에서 제외할 경로 패턴 (쉼표 구분, 정규식)"
+        },
+        "blog-auto.postTitleFormat": {
+          "type": "string",
+          "default": "오늘 한 일 ({{date}})",
+          "description": "블로그 제목 형식. {{date}} 사용 가능"
+        },
+        "blog-auto.introTemplate": {
+          "type": "string",
+          "default": "오늘은 **{{branch}}** 브랜치에서 작업했어요.",
+          "description": "인트로 문장. {{branch}} 또는 {{branches}} 사용 가능"
+        },
+        "blog-auto.memoFilePath": {
+          "type": "string",
+          "default": "",
+          "description": "오늘 메모 파일 경로 (워크스페이스 기준, 예: memo/today.md). 있으면 정리본에 병합"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.3.0"
+  }
+}
