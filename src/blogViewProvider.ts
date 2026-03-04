@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 import {
   getWorkspaceRoot,
   getBranches,
@@ -7,31 +7,35 @@ import {
   type CommitInfo,
   type DateRange,
   type DiffOptions,
-} from './gitHelper';
+} from "./gitHelper";
 import {
   getDrafts,
   saveDraft,
   loadDraft,
   type DraftEntry,
-} from './draftStorage';
-import { readMemoFromWorkspace } from './memoReader';
+} from "./draftStorage";
+import { readMemoFromWorkspace } from "./memoReader";
 import {
   fetchBlogStyleSamples,
   getStoredStyleSamples,
   setStoredStyleSamples,
-} from './styleHelper';
+} from "./styleHelper";
 
-const VIEW_ID = 'cursorPlugin.blogView';
+const VIEW_ID = "cursorPlugin.blogView";
 
 /** 블로그 친화적 에러/안내 메시지 (재검토 포인트: 문구 톤 통일) */
 const MSG = {
-  NO_WORKSPACE: '워크스페이스 폴더를 열어 주세요. (파일 > 폴더 열기)',
-  NO_BRANCHES: '이 폴더가 Git 저장소가 아니거나 로컬 브랜치가 없어요. 터미널에서 git status를 실행해 보세요.',
-  NO_BRANCH_SELECTED: '정리할 브랜치를 하나 이상 선택해 주세요.',
-  NO_COMMITS: '선택한 기간에 커밋이 없어요. 날짜 범위를 바꿔 보거나, 다른 브랜치를 선택해 보세요.',
-  NO_CONTENT: '정리된 내용이 없어요. 먼저 커밋 정리나 현재 문서 정리를 실행해 주세요.',
-  LOAD_STYLE_FIRST: '말투 샘플을 먼저 불러와 주세요. (블로그 주소 입력 후 "말투 샘플 불러오기")',
-  BLOG_URL_REQUIRED: '블로그 주소를 입력하거나 설정에 저장해 주세요.',
+  NO_WORKSPACE: "워크스페이스 폴더를 열어 주세요. (파일 > 폴더 열기)",
+  NO_BRANCHES:
+    "이 폴더가 Git 저장소가 아니거나 로컬 브랜치가 없어요. 터미널에서 git status를 실행해 보세요.",
+  NO_BRANCH_SELECTED: "정리할 브랜치를 하나 이상 선택해 주세요.",
+  NO_COMMITS:
+    "선택한 기간에 커밋이 없어요. 날짜 범위를 바꿔 보거나, 다른 브랜치를 선택해 보세요.",
+  NO_CONTENT:
+    "정리된 내용이 없어요. 먼저 커밋 정리나 현재 문서 정리를 실행해 주세요.",
+  LOAD_STYLE_FIRST:
+    '말투 샘플을 먼저 불러와 주세요. (블로그 주소 입력 후 "말투 샘플 불러오기")',
+  BLOG_URL_REQUIRED: "블로그 주소를 입력하거나 설정에 저장해 주세요.",
 } as const;
 
 function getTodayString(): string {
@@ -39,28 +43,52 @@ function getTodayString(): string {
 }
 
 function getConfig() {
-  return vscode.workspace.getConfiguration('blog-auto');
+  return vscode.workspace.getConfiguration("blog-auto");
 }
 
 /** 설정에서 제목/인트로 템플릿 + diff 옵션 생성 */
 function getTemplateAndDiffOptions(config: vscode.WorkspaceConfiguration) {
-  const titleFormat = config.get<string>('postTitleFormat', '오늘 한 일 ({{date}})');
-  const introTemplate = config.get<string>('introTemplate', '오늘은 **{{branch}}** 브랜치에서 작업했어요.');
-  const extStr = config.get<string>('diffIncludeExtensions', 'ts,tsx,js,jsx,css,html,vue,json');
-  const skipStr = config.get<string>('diffSkipPatterns', 'package-lock\\.json,.lock$,node_modules,^dist/');
+  const titleFormat = config.get<string>(
+    "postTitleFormat",
+    "오늘 한 일 ({{date}})",
+  );
+  const introTemplate = config.get<string>(
+    "introTemplate",
+    "오늘은 **{{branch}}** 브랜치에서 작업했어요.",
+  );
+  const extStr = config.get<string>(
+    "diffIncludeExtensions",
+    "ts,tsx,js,jsx,css,html,vue,json",
+  );
+  const skipStr = config.get<string>(
+    "diffSkipPatterns",
+    "package-lock\\.json,.lock$,node_modules,^dist/",
+  );
   const includeExtensions = new RegExp(
-    '\\.(' + extStr.split(',').map((e) => e.trim().replace(/^\./, '')).join('|') + ')$',
-    'i'
+    "\\.(" +
+      extStr
+        .split(",")
+        .map((e) => e.trim().replace(/^\./, ""))
+        .join("|") +
+      ")$",
+    "i",
   );
   let skipPatterns: RegExp;
   try {
-    skipPatterns = new RegExp(skipStr.split(',').map((p) => p.trim()).filter(Boolean).join('|'), 'i');
+    skipPatterns = new RegExp(
+      skipStr
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .join("|"),
+      "i",
+    );
   } catch {
     skipPatterns = /package-lock\.json|\.lock$|node_modules|^dist\//i;
   }
   const diffOptions: Partial<DiffOptions> = {
-    maxLinesPerCommit: config.get<number>('diffMaxLinesPerCommit', 120),
-    maxLinesPerFile: config.get<number>('diffMaxLinesPerFile', 35),
+    maxLinesPerCommit: config.get<number>("diffMaxLinesPerCommit", 120),
+    maxLinesPerFile: config.get<number>("diffMaxLinesPerFile", 35),
     includeExtensions,
     skipPatterns,
   };
@@ -69,14 +97,20 @@ function getTemplateAndDiffOptions(config: vscode.WorkspaceConfiguration) {
 
 function formatAsBlogPost(content: string, titleFormat?: string): string {
   const date = getTodayString();
-  const title = (titleFormat || '오늘 한 일 ({{date}})').replace(/\{\{date\}\}/g, date);
-  const divider = '\n---\n\n';
+  const title = (titleFormat || "오늘 한 일 ({{date}})").replace(
+    /\{\{date\}\}/g,
+    date,
+  );
+  const divider = "\n---\n\n";
   const body = content.trim();
   return `# ${title}${divider}${body}\n`;
 }
 
 /** Cursor 채팅에 붙여넣을 말투 적용 프롬프트 — 구조화된 지시 + 예시 + 초안 */
-function buildCursorStylePrompt(styleSamples: string, contentToRewrite: string): string {
+function buildCursorStylePrompt(
+  styleSamples: string,
+  contentToRewrite: string,
+): string {
   const role = `[역할]
 너는 내 블로그 글 말투를 정확히 흉내하는 글쓰기 도우미야.`;
 
@@ -98,49 +132,85 @@ function buildCursorStylePrompt(styleSamples: string, contentToRewrite: string):
 
   return [
     role,
-    '',
+    "",
     analyze,
-    '',
+    "",
     rules,
-    '',
+    "",
     sampleLabel,
     styleSamples.slice(0, 8000),
-    '',
+    "",
     draftLabel,
     contentToRewrite,
-  ].join('\n');
+  ].join("\n");
 }
 
 /** Cursor에 붙여넣을 "기술·어려움·진행 내용 요약" 요청 프롬프트 */
 function buildSummaryRequestPrompt(commitListContent: string): string {
   const role = `[역할]
-아래는 오늘 하루 커밋·파일 변경 내역이야. 이걸 바탕으로 블로그에 쓸 수 있게 **요약 정리**해줘.`;
+아래 커밋·파일 변경 내역을 분석해서 **티스토리·벨로그 같은 일반 테크 블로그·일상 블로그에 그대로 쓸 수 있는 본문 초안**을 만들어줘.`;
+
+  const audience = `[대상과 톤]
+- **독자**: 개발에 관심 있는 동료, 후배, 또는 "오늘 뭘 했는지" 기록해 두려는 나 자신.
+- **목적**: 테크 블로그 포스트 또는 일상적인 "오늘 한 일" 글로 바로 붙여 넣을 수 있어야 함.
+- **문체**: 해요체. 한 문장은 짧고 읽기 쉽게. 전문 용어는 필요할 때만 쓰고, 쓸 때는 한 번만 풀어서 설명해도 됨.
+- **금지**: 메타 코멘트("위 내용을 정리하면…"), 과한 격식, 슬랙/이슈 트래커 스타일의 나열만 하지 마. 블로그 한 편의 글로 읽히게.`;
+
+  const outputFormat = `[출력 형식]
+- 아래 마크다운 구조만 사용해서 출력해. 다른 설명 없이 **블로그 본문으로 쓸 수 있는 내용만** 출력해.
+- 각 섹션 제목(##)은 그대로 두고, 본문만 채워줘.
+
+\`\`\`
+## 사용된 기술
+
+## 어려움이나 고려한 점
+
+## 진행한 작업 요약
+\`\`\``;
 
   const request = `[요청]
-아래 [오늘 커밋·변경 내역]을 보고 다음 세 가지를 정리해줘. 다른 설명 없이 아래 형식으로만 출력해.
+[오늘 커밋·변경 내역]을 보고 다음 세 섹션을 **블로그 포스트 한 편 분량**으로 채워줘.
 
 1. **사용된 기술**
-   - 커밋 메시지와 변경된 파일 경로·확장자를 보면 어떤 기술 스택(프레임워크, 라이브러리, 언어 등)을 썼는지 추론할 수 있어. 나열해줘.
+   - 커밋·변경 파일에서 실제로 쓰인 기술만 나열해 (프레임워크, 라이브러리, 언어, 도구). 근거 없는 추측은 넣지 마.
+   - 테크 블로그 독자도, 일상 블로그만 보는 독자도 "뭘로 했구나" 알 수 있게. 불릿(·) 또는 한두 줄 나열.
 
 2. **어려움이나 고려한 점**
-   - 커밋 제목·변경 규모를 보면 접근성, 리팩터링, 구조 설계 등 어떤 걸 신경 썼을지 추론해서 짧게 써줘. 없으면 "특별히 적어둘 만한 어려움은 없음" 정도로.
+   - 커밋 제목·변경 규모에서 읽히는 "고민한 점"이 있으면 1~2문장으로. 없으면 "이번에는 특별히 적어둘 만한 어려움은 없었어요." 한 줄로.
 
 3. **진행한 작업 요약**
-   - 시간순으로 뭘 만들고 뭘 바꿨는지, 한두 문단으로 자연스럽게 요약해줘. (예: "Next.js 프로젝트를 세팅하고, 공통 레이아웃과 헤더·네비를 추가했어요. problems 페이지를 reviews로 바꾸고, 포커스·active 상태 등 접근성을 넣었어요.")`;
+   - **시간순**으로 "무엇을 만들고/바꿨는지" 2~4문장으로 자연스럽게. 일상 블로그의 "오늘 한 일"처럼 흐름 있게.
+   - 예: "Next.js 프로젝트를 세팅하고, 공통 레이아웃과 헤더·네비를 추가했어요. 그다음 problems 페이지를 reviews로 바꾼 뒤, 포커스·active 상태 같은 접근성도 조금 넣었어요."`;
 
   const dataLabel = `[오늘 커밋·변경 내역]`;
-  return [role, '', request, '', dataLabel, '', commitListContent].join('\n');
+  return [
+    role,
+    "",
+    audience,
+    "",
+    outputFormat,
+    "",
+    request,
+    "",
+    dataLabel,
+    "",
+    commitListContent,
+  ].join("\n");
 }
 
 /** 커밋 한 블록: 제목 + (해시) + 파일 목록 + (옵션) 핵심 코드 diff */
 function formatCommitBlock(c: CommitInfo): string {
   const shortHash = c.hash.slice(0, 7);
   const head = `- **${c.subject}** (${shortHash})`;
-  const filePart =
-    !c.files?.length ? head : [head, ...c.files.map((f) => {
-      const stat = f.add > 0 || f.del > 0 ? ` +${f.add} -${f.del}` : '';
-      return `  - ${f.path}${stat}`;
-    })].join('\n');
+  const filePart = !c.files?.length
+    ? head
+    : [
+        head,
+        ...c.files.map((f) => {
+          const stat = f.add > 0 || f.del > 0 ? ` +${f.add} -${f.del}` : "";
+          return `  - ${f.path}${stat}`;
+        }),
+      ].join("\n");
   if (!c.diff?.trim()) return filePart;
   return `${filePart}\n\n\`\`\`diff\n${c.diff}\n\`\`\``;
 }
@@ -154,27 +224,35 @@ interface FormatPostOptions {
 
 function formatCommitsAsPost(
   branchCommits: { branch: string; commits: CommitInfo[] }[],
-  options: FormatPostOptions
+  options: FormatPostOptions,
 ): string {
   const { titleFormat, introTemplate, dateLabel, memoSection } = options;
-  const title = (titleFormat || '오늘 한 일 ({{date}})').replace(/\{\{date\}\}/g, dateLabel);
+  const title = (titleFormat || "오늘 한 일 ({{date}})").replace(
+    /\{\{date\}\}/g,
+    dateLabel,
+  );
   const withCommits = branchCommits.filter(({ commits }) => commits.length > 0);
   if (withCommits.length === 0) {
     return `# ${title}\n\n${options.dateLabel} 기간에 커밋이 없습니다.\n`;
   }
 
   const branchNames = withCommits.map(({ branch }) => branch);
-  const branchPlaceholder = branchNames.length === 1 ? branchNames[0] : branchNames.map((b) => `**${b}**`).join(', ');
-  const intro = (introTemplate || '오늘은 **{{branch}}** 브랜치에서 작업했어요.')
+  const branchPlaceholder =
+    branchNames.length === 1
+      ? branchNames[0]
+      : branchNames.map((b) => `**${b}**`).join(", ");
+  const intro = (
+    introTemplate || "오늘은 **{{branch}}** 브랜치에서 작업했어요."
+  )
     .replace(/\{\{branch\}\}/g, branchNames[0])
     .replace(/\{\{branches\}\}/g, branchPlaceholder);
 
   const sections = withCommits.map(({ branch, commits }) => {
-    const list = commits.map((c) => formatCommitBlock(c)).join('\n\n');
+    const list = commits.map((c) => formatCommitBlock(c)).join("\n\n");
     return branchNames.length === 1 ? list : `**${branch}**\n\n${list}`;
   });
 
-  let body = `${intro}\n\n${sections.join('\n\n')}`;
+  let body = `${intro}\n\n${sections.join("\n\n")}`;
   if (memoSection?.trim()) {
     body += `\n\n---\n\n## 오늘 메모\n\n${memoSection.trim()}\n`;
   }
@@ -357,22 +435,25 @@ function getWebviewHtml(): string {
 
 function setupWebviewMessageHandler(
   webview: vscode.Webview,
-  extensionContext: vscode.ExtensionContext
+  extensionContext: vscode.ExtensionContext,
 ): void {
-
   webview.onDidReceiveMessage(async (msg) => {
     try {
       switch (msg.type) {
-        case 'listDrafts': {
+        case "listDrafts": {
           const drafts = getDrafts(extensionContext);
           webview.postMessage({
-            type: 'drafts',
-            drafts: drafts.map((d) => ({ id: d.id, title: d.title, createdAt: d.createdAt })),
+            type: "drafts",
+            drafts: drafts.map((d) => ({
+              id: d.id,
+              title: d.title,
+              createdAt: d.createdAt,
+            })),
           });
           break;
         }
-        case 'saveDraft': {
-          const content = (msg.content || '').trim();
+        case "saveDraft": {
+          const content = (msg.content || "").trim();
           if (!content) {
             vscode.window.showInformationMessage(MSG.NO_CONTENT);
             return;
@@ -380,24 +461,30 @@ function setupWebviewMessageHandler(
           const entry = saveDraft(extensionContext, content);
           const drafts = getDrafts(extensionContext);
           webview.postMessage({
-            type: 'drafts',
-            drafts: drafts.map((d) => ({ id: d.id, title: d.title, createdAt: d.createdAt })),
+            type: "drafts",
+            drafts: drafts.map((d) => ({
+              id: d.id,
+              title: d.title,
+              createdAt: d.createdAt,
+            })),
           });
-          vscode.window.showInformationMessage(`초안을 저장했어요. "${entry.title}"`);
+          vscode.window.showInformationMessage(
+            `초안을 저장했어요. "${entry.title}"`,
+          );
           break;
         }
-        case 'loadDraft': {
+        case "loadDraft": {
           const id = msg.id;
           if (!id) return;
           const content = loadDraft(extensionContext, id);
           if (content !== undefined) {
-            webview.postMessage({ type: 'formatted', content });
-            vscode.window.showInformationMessage('저장된 초안을 불러왔어요.');
+            webview.postMessage({ type: "formatted", content });
+            vscode.window.showInformationMessage("저장된 초안을 불러왔어요.");
           }
           break;
         }
-        case 'summaryRequestPrompt': {
-          const content = (msg.content || '').trim();
+        case "summaryRequestPrompt": {
+          const content = (msg.content || "").trim();
           if (!content) {
             vscode.window.showInformationMessage(MSG.NO_CONTENT);
             return;
@@ -405,12 +492,12 @@ function setupWebviewMessageHandler(
           const prompt = buildSummaryRequestPrompt(content);
           await vscode.env.clipboard.writeText(prompt);
           vscode.window.showInformationMessage(
-            '기술·진행 요약 요청 프롬프트를 복사했어요. Cursor 채팅(Ctrl+L)에 붙여넣어 전송하면 사용 기술·어려움·진행 내용이 정리돼요.'
+            "기술·진행 요약 요청 프롬프트를 복사했어요. Cursor 채팅(Ctrl+L)에 붙여넣어 전송하면 사용 기술·어려움·진행 내용이 정리돼요.",
           );
           break;
         }
-        case 'cursorStylePrompt': {
-          const content = (msg.content || '').trim();
+        case "cursorStylePrompt": {
+          const content = (msg.content || "").trim();
           if (!content) {
             vscode.window.showInformationMessage(MSG.NO_CONTENT);
             return;
@@ -423,22 +510,23 @@ function setupWebviewMessageHandler(
           const prompt = buildCursorStylePrompt(samples, content);
           await vscode.env.clipboard.writeText(prompt);
           vscode.window.showInformationMessage(
-            'Cursor 채팅에 붙여넣을 프롬프트를 복사했어요. Ctrl+L(또는 Cmd+L)로 채팅을 열고 붙여넣기 후 전송하세요.'
+            "Cursor 채팅에 붙여넣을 프롬프트를 복사했어요. Ctrl+L(또는 Cmd+L)로 채팅을 열고 붙여넣기 후 전송하세요.",
           );
           break;
         }
-        case 'getBranches': {
+        case "getBranches": {
           const root = getWorkspaceRoot();
           if (!root) {
             vscode.window.showInformationMessage(MSG.NO_WORKSPACE);
             return;
           }
           const branches = getBranches(root);
-          webview.postMessage({ type: 'branches', branches });
-          if (branches.length === 0) vscode.window.showInformationMessage(MSG.NO_BRANCHES);
+          webview.postMessage({ type: "branches", branches });
+          if (branches.length === 0)
+            vscode.window.showInformationMessage(MSG.NO_BRANCHES);
           break;
         }
-        case 'formatFromCommits': {
+        case "formatFromCommits": {
           const root = getWorkspaceRoot();
           if (!root) {
             vscode.window.showInformationMessage(MSG.NO_WORKSPACE);
@@ -450,22 +538,32 @@ function setupWebviewMessageHandler(
             return;
           }
           const config = getConfig();
-          const { titleFormat, introTemplate, diffOptions } = getTemplateAndDiffOptions(config);
+          const { titleFormat, introTemplate, diffOptions } =
+            getTemplateAndDiffOptions(config);
           const dateRange = getDateRangeForPreset(
-            msg.datePreset || 'today',
+            msg.datePreset || "today",
             msg.customSince,
-            msg.customUntil
+            msg.customUntil,
           );
-          const branchCommits = getCommitsForBranchesInRange(root, branches, dateRange, {
-            includeDiff: !!msg.includeDiff,
-            diffOptions,
-          });
-          const withCommits = branchCommits.filter(({ commits }) => commits.length > 0);
+          const branchCommits = getCommitsForBranchesInRange(
+            root,
+            branches,
+            dateRange,
+            {
+              includeDiff: !!msg.includeDiff,
+              diffOptions,
+            },
+          );
+          const withCommits = branchCommits.filter(
+            ({ commits }) => commits.length > 0,
+          );
           if (withCommits.length === 0) {
             vscode.window.showInformationMessage(MSG.NO_COMMITS);
-            const dateLabel = dateRange.until ? `${dateRange.since} ~ ${dateRange.until}` : dateRange.since;
+            const dateLabel = dateRange.until
+              ? `${dateRange.since} ~ ${dateRange.until}`
+              : dateRange.since;
             webview.postMessage({
-              type: 'formatted',
+              type: "formatted",
               content: formatCommitsAsPost(branchCommits, {
                 titleFormat,
                 introTemplate,
@@ -475,33 +573,39 @@ function setupWebviewMessageHandler(
             });
             return;
           }
-          const memoPath = config.get<string>('memoFilePath', '');
-          const memoSection = memoPath ? await readMemoFromWorkspace(root, memoPath) : null;
-          const dateLabel = dateRange.until ? `${dateRange.since} ~ ${dateRange.until}` : dateRange.since;
+          const memoPath = config.get<string>("memoFilePath", "");
+          const memoSection = memoPath
+            ? await readMemoFromWorkspace(root, memoPath)
+            : null;
+          const dateLabel = dateRange.until
+            ? `${dateRange.since} ~ ${dateRange.until}`
+            : dateRange.since;
           const formatted = formatCommitsAsPost(branchCommits, {
             titleFormat,
             introTemplate,
             dateLabel,
             memoSection,
           });
-          webview.postMessage({ type: 'formatted', content: formatted });
+          webview.postMessage({ type: "formatted", content: formatted });
           break;
         }
-        case 'loadStyleSamples': {
+        case "loadStyleSamples": {
           const config = getConfig();
-          const url = msg.blogUrl || config.get<string>('blogUrl', '');
+          const url = msg.blogUrl || config.get<string>("blogUrl", "");
           if (!url) {
             vscode.window.showInformationMessage(MSG.BLOG_URL_REQUIRED);
             return;
           }
           const text = await fetchBlogStyleSamples(url);
           setStoredStyleSamples(extensionContext, text);
-          vscode.window.showInformationMessage(`말투 샘플을 불러왔어요. (${text.length}자)`);
+          vscode.window.showInformationMessage(
+            `말투 샘플을 불러왔어요. (${text.length}자)`,
+          );
           break;
         }
-        case 'formatDocument': {
+        case "formatDocument": {
           const editor = vscode.window.activeTextEditor;
-          let content = '';
+          let content = "";
           if (editor) {
             const sel = editor.selection;
             content = sel.isEmpty
@@ -513,29 +617,32 @@ function setupWebviewMessageHandler(
             return;
           }
           const cfg = getConfig();
-          const fmt = cfg.get<string>('postTitleFormat', '오늘 한 일 ({{date}})');
+          const fmt = cfg.get<string>(
+            "postTitleFormat",
+            "오늘 한 일 ({{date}})",
+          );
           const formatted = formatAsBlogPost(content, fmt);
-          webview.postMessage({ type: 'formatted', content: formatted });
+          webview.postMessage({ type: "formatted", content: formatted });
           break;
         }
-        case 'openInEditor': {
-          const text = (msg.content || '').trim();
+        case "openInEditor": {
+          const text = (msg.content || "").trim();
           if (!text) {
             vscode.window.showInformationMessage(MSG.NO_CONTENT);
             return;
           }
           const doc = await vscode.workspace.openTextDocument({
             content: text,
-            language: 'markdown',
+            language: "markdown",
           });
           await vscode.window.showTextDocument(doc, { preview: false });
           break;
         }
-        case 'copyToClipboard': {
-          const text = msg.content || '';
+        case "copyToClipboard": {
+          const text = msg.content || "";
           if (text) {
             await vscode.env.clipboard.writeText(text);
-            vscode.window.showInformationMessage('클립보드에 복사했어요.');
+            vscode.window.showInformationMessage("클립보드에 복사했어요.");
           } else {
             vscode.window.showInformationMessage(MSG.NO_CONTENT);
           }
@@ -555,9 +662,12 @@ export class BlogViewProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(
     webviewView: vscode.WebviewView,
     _resolveContext: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken
+    _token: vscode.CancellationToken,
   ): void {
-    webviewView.webview.options = { enableScripts: true, localResourceRoots: [] };
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [],
+    };
     webviewView.webview.html = getWebviewHtml();
     setupWebviewMessageHandler(webviewView.webview, this._context);
   }
@@ -565,6 +675,9 @@ export class BlogViewProvider implements vscode.WebviewViewProvider {
 
 export function registerBlogView(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(VIEW_ID, new BlogViewProvider(context))
+    vscode.window.registerWebviewViewProvider(
+      VIEW_ID,
+      new BlogViewProvider(context),
+    ),
   );
 }
