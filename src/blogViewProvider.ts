@@ -4,6 +4,7 @@ import {
   getBranches,
   getCommitsForBranchesInRange,
   getDateRangeForPreset,
+  getSingleCommitInfo,
   type CommitInfo,
   type DateRange,
   type DiffOptions,
@@ -36,6 +37,8 @@ const MSG = {
   LOAD_STYLE_FIRST:
     '말투 샘플을 먼저 불러와 주세요. (블로그 주소 입력 후 "말투 샘플 불러오기")',
   BLOG_URL_REQUIRED: "블로그 주소를 입력하거나 설정에 저장해 주세요.",
+  COMMIT_HASH_EMPTY: "커밋 해시를 입력해 주세요. (예: 95db1b4)",
+  COMMIT_NOT_FOUND: "해당 커밋을 찾을 수 없어요. 해시가 맞는지, 저장소에 있는지 확인해 주세요.",
 } as const;
 
 function getTodayString(): string {
@@ -198,6 +201,52 @@ function buildSummaryRequestPrompt(commitListContent: string): string {
   ].join("\n");
 }
 
+/** 단일 커밋 조회 결과를 화면/분석용 텍스트로 포맷 */
+function formatSingleCommitForDisplay(commit: CommitInfo): string {
+  const head = `## 커밋 조회 결과 (${commit.hash})\n\n**${commit.subject}**\n`;
+  const bodyLine = commit.body ? `\n${commit.body}\n` : "";
+  const filePart = !commit.files?.length
+    ? ""
+    : "\n변경 파일:\n" +
+      commit.files
+        .map((f) => `  - ${f.path} +${f.add} -${f.del}`.trim())
+        .join("\n") +
+      "\n";
+  const diffPart = commit.diff?.trim()
+    ? `\n\`\`\`diff\n${commit.diff}\n\`\`\`\n`
+    : "";
+  return head + bodyLine + filePart + diffPart;
+}
+
+/** Cursor에 붙여넣을 "커밋 효과·부족한 점·개선 결과" 분석 요청 프롬프트 */
+function buildCommitAnalysisPrompt(commitContent: string): string {
+  const role = `[역할]
+아래는 Git 커밋 하나의 조회 결과야 (제목, 본문, 변경 파일 목록, 코드 diff). 이 커밋이 **무슨 변경을 했고, 무슨 효과를 냈는지**, **이전에는 어떤 부분이 부족했는지**, **어떻게 더 나은 결과를 만들었는지** 분석해줘.`;
+
+  const outputFormat = `[출력 형식]
+아래 네 가지를 마크다운으로만 출력해. 다른 설명 없이 블로그·회고·PR 설명에 쓸 수 있는 문장으로.
+
+\`\`\`
+## 1. 어떤 코드를 어떻게 바꿨는지
+
+## 2. 무슨 효과를 냈는지
+
+## 3. 이전에 부족했던 점
+
+## 4. 어떻게 더 나은 결과가 되었는지
+\`\`\``;
+
+  const request = `[요청]
+- **1**에서는 diff와 커밋 메시지를 보고, "어떤 파일/기능을 어떤 방식으로 수정·추가·삭제했는지"를 2~4문장으로 요약해.
+- **2**에서는 그 변경이 사용자·시스템·개발 경험에 어떤 효과(개선)를 주는지 써줘.
+- **3**에서는 변경 전 코드/설계에서 무엇이 부족했는지(버그, 가독성, 성능, 일관성 등)를 짧게.
+- **4**에서는 "그래서 이번 수정으로 무엇이 나아졌는지"를 1~2문장으로 마무리해.
+- 해요체·블로그 톤으로 써줘.`;
+
+  const dataLabel = `[커밋 조회 결과]`;
+  return [role, "", outputFormat, "", request, "", dataLabel, "", commitContent].join("\n");
+}
+
 /** 커밋 한 블록: 제목 + (해시) + 파일 목록 + (옵션) 핵심 코드 diff */
 function formatCommitBlock(c: CommitInfo): string {
   const shortHash = c.hash.slice(0, 7);
@@ -349,6 +398,15 @@ function getWebviewHtml(): string {
     <p class="hint">열린 에디터 내용을 블로그용 제목·구분선으로 감싸요. 설정의 "블로그 정리"에서 제목 형식 변경 가능.</p>
   </div>
   <div class="section">
+    <label>커밋 ID로 조회·분석</label>
+    <input type="text" id="commitHash" placeholder="커밋 해시 (예: 95db1b4)" style="margin-bottom: 6px;" />
+    <div style="margin-top: 6px;">
+      <button class="btn" id="btnFetchCommit">커밋 조회</button>
+      <button class="btn btn-secondary" id="btnCommitAnalysis">효과·개선점 분석 (Cursor에 붙여넣기)</button>
+    </div>
+    <p class="hint">해시 입력 후 "커밋 조회"하면 정리된 내용에 표시돼요. "효과·개선점 분석"은 그 내용을 Cursor에 붙여넣어 전송하면 효과·부족했던 점·개선 결과를 정리해줘요.</p>
+  </div>
+  <div class="section">
     <label>말투 학습 (Cursor 사용)</label>
     <input type="text" id="blogUrl" placeholder="블로그 주소 (티스토리/벨로그 등)" />
     <button class="btn btn-secondary" id="btnLoadStyle">말투 샘플 불러오기</button>
@@ -426,6 +484,8 @@ function getWebviewHtml(): string {
     vscode.postMessage({ type: 'listDrafts' });
     document.getElementById('btnSummaryRequest').onclick = () => vscode.postMessage({ type: 'summaryRequestPrompt', content: output.value });
     document.getElementById('btnCursorStyle').onclick = () => vscode.postMessage({ type: 'cursorStylePrompt', content: output.value });
+    document.getElementById('btnFetchCommit').onclick = () => vscode.postMessage({ type: 'fetchCommitByHash', hash: document.getElementById('commitHash').value.trim() });
+    document.getElementById('btnCommitAnalysis').onclick = () => vscode.postMessage({ type: 'commitAnalysisPrompt', content: output.value });
     document.getElementById('btnOpen').onclick = () => vscode.postMessage({ type: 'openInEditor', content: output.value });
     document.getElementById('btnCopy').onclick = () => vscode.postMessage({ type: 'copyToClipboard', content: output.value });
   </script>
@@ -524,6 +584,47 @@ function setupWebviewMessageHandler(
           webview.postMessage({ type: "branches", branches });
           if (branches.length === 0)
             vscode.window.showInformationMessage(MSG.NO_BRANCHES);
+          break;
+        }
+        case "fetchCommitByHash": {
+          const root = getWorkspaceRoot();
+          if (!root) {
+            vscode.window.showInformationMessage(MSG.NO_WORKSPACE);
+            return;
+          }
+          const hash = (msg.hash || "").trim();
+          if (!hash) {
+            vscode.window.showInformationMessage(MSG.COMMIT_HASH_EMPTY);
+            return;
+          }
+          const config = getConfig();
+          const { diffOptions } = getTemplateAndDiffOptions(config);
+          const commit = getSingleCommitInfo(root, hash, {
+            includeDiff: true,
+            diffOptions,
+          });
+          if (!commit) {
+            vscode.window.showWarningMessage(MSG.COMMIT_NOT_FOUND);
+            return;
+          }
+          const formatted = formatSingleCommitForDisplay(commit);
+          webview.postMessage({ type: "formatted", content: formatted });
+          vscode.window.showInformationMessage(
+            `커밋 "${commit.subject.slice(0, 40)}${commit.subject.length > 40 ? "…" : ""}" 조회했어요.`
+          );
+          break;
+        }
+        case "commitAnalysisPrompt": {
+          const content = (msg.content || "").trim();
+          if (!content) {
+            vscode.window.showInformationMessage(MSG.NO_CONTENT);
+            return;
+          }
+          const prompt = buildCommitAnalysisPrompt(content);
+          await vscode.env.clipboard.writeText(prompt);
+          vscode.window.showInformationMessage(
+            "커밋 효과·개선점 분석 프롬프트를 복사했어요. Cursor 채팅(Ctrl+L)에 붙여넣어 전송하면 어떤 코드를 어떻게 바꿨는지, 무슨 효과·부족한 점·개선 결과를 정리해줘요."
+          );
           break;
         }
         case "formatFromCommits": {

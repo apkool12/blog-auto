@@ -221,3 +221,37 @@ export function getCommitsForBranchesInRange(
     commits: getCommitsWithStatsInRange(workspaceRoot, branch, dateRange, options),
   }));
 }
+
+/** 커밋 ID(해시) 하나로 해당 커밋 상세 조회. 없으면 null */
+export function getSingleCommitInfo(
+  workspaceRoot: string,
+  hash: string,
+  options?: { includeDiff?: boolean; diffOptions?: Partial<DiffOptions> }
+): CommitInfo | null {
+  const trimmed = hash.trim();
+  if (!trimmed) return null;
+  try {
+    const out = execSync(
+      `git log -1 ${trimmed} --pretty=format:"%h%x00%s%x00%b"`,
+      { cwd: workspaceRoot, encoding: 'utf-8', maxBuffer: 64 * 1024 }
+    );
+    const parts = out.split('\0');
+    const subject = parts[1]?.trim() ?? '';
+    const body = (parts[2] ?? '').trim().replace(/\n+/g, ' ');
+    const files = getCommitFileStats(workspaceRoot, trimmed);
+    let diff: string | undefined;
+    if (options?.includeDiff !== false) {
+      const d = getCommitDiff(workspaceRoot, trimmed, options?.diffOptions);
+      if (d) diff = d;
+    }
+    return {
+      hash: parts[0]?.trim() ?? trimmed.slice(0, 7),
+      subject,
+      body,
+      files: files.length ? files : undefined,
+      diff,
+    };
+  } catch {
+    return null;
+  }
+}
